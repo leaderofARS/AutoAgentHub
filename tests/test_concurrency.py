@@ -189,3 +189,16 @@ def test_root_list_tasks_dlq_retry_and_cron_endpoints(tmp_path, monkeypatch) -> 
         cron_resp = client.post("/api/cron/trigger?job=digest")
         assert cron_resp.status_code == 202
         assert cron_resp.json()["job"] == "digest"
+
+
+@pytest.mark.asyncio
+async def test_list_user_repositories_fallback(monkeypatch) -> None:
+    from autoagenthub.config import Settings
+    from autoagenthub.github_tools import list_user_repositories
+
+    monkeypatch.setattr(
+        "autoagenthub.github_tools.get_settings",
+        lambda: Settings(github_token="", github_default_repo="leaderofARS/AutoAgentHub"),
+    )
+    repos = await list_user_repositories()
+    assert repos == ["leaderofARS/AutoAgentHub"]

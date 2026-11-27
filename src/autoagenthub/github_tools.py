@@ -316,3 +316,19 @@ async def create_github_issue(
         resp.raise_for_status()
         data = resp.json()
         return {"number": data["number"], "url": data["html_url"], "title": data["title"]}
+
+
+async def list_user_repositories(limit: int = 8) -> list[str]:
+    """List recently updated GitHub repositories accessible to GITHUB_TOKEN."""
+    settings = get_settings()
+    if not settings.github_token:
+        return [settings.github_default_repo] if settings.github_default_repo else []
+    headers = _headers(settings.github_token)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{GITHUB_API}/user/repos",
+            headers=headers,
+            params={"sort": "updated", "per_page": limit, "affiliation": "owner,collaborator"},
+        )
+        resp.raise_for_status()
+        return [r["full_name"] for r in resp.json() if r.get("full_name")]

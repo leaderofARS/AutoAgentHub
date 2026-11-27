@@ -31,6 +31,7 @@ from autoagenthub.github_tools import (
     apply_repo_code_change,
     audit_repository_summary,
     create_github_issue,
+    list_user_repositories,
 )
 from autoagenthub.jobs_tools import approve_job_application, find_daily_jobs
 from autoagenthub.news_tools import get_latest_news
@@ -280,6 +281,26 @@ async def _send_tg_reply(message_obj, reply: str, with_job_buttons: bool = False
         await message_obj.reply_text(chunk)
 
 
+async def _send_repo_picker(target_msg, edit: bool = False) -> None:
+    try:
+        repos = await list_user_repositories(limit=8)
+    except Exception:
+        repos = []
+    if not repos:
+        text = "Send `/repo owner/repo` to choose which repository to check."
+        if edit:
+            await target_msg.edit_text(text)
+        else:
+            await target_msg.reply_text(text)
+        return
+    buttons = [[InlineKeyboardButton(r, callback_data=f"repo:{r}")] for r in repos]
+    prompt = "Which GitHub repository do you want to check? Tap one or send `/repo owner/repo`:"
+    if edit:
+        await target_msg.edit_text(prompt, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await target_msg.reply_text(prompt, reply_markup=InlineKeyboardMarkup(buttons))
+
+
 async def _tg_handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or not update.effective_chat:
         return
@@ -293,6 +314,10 @@ async def _tg_handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if lower in {"/start", "/menu"}:
         reply = await route_user_message(text)
         await update.effective_message.reply_text(reply, reply_markup=_main_menu_markup())
+        return
+
+    if lower == "/repo":
+        await _send_repo_picker(update.effective_message, edit=False)
         return
 
     if lower.startswith("/remind"):
@@ -325,8 +350,11 @@ async def _tg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if query.data.startswith("menu:"):
         action = query.data.split(":", 1)[1]
+        if action == "repo":
+            if query.message:
+                await _send_repo_picker(query.message, edit=True)
+            return
         cmd_map = {
-            "repo": "/repo",
             "news": "/news AI and technology",
             "jobs": "/jobs",
             "digest": "/digest",
@@ -338,6 +366,14 @@ async def _tg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply = await route_user_message(cmd)
         if query.message:
             await _send_tg_reply(query.message, reply, with_job_buttons=(action == "jobs"))
+        return
+
+    if query.data.startswith("repo:"):
+        selected_repo = query.data.split(":", 1)[1]
+        await query.edit_message_text(f"Auditing `{selected_repo}`...")
+        reply = await audit_repository_summary(repo=selected_repo)
+        if query.message:
+            await _send_tg_reply(query.message, reply)
         return
 
     if query.data.startswith("apply:"):
