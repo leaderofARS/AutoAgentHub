@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "autoagenthub": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:/Users/Asus/Documents/AutoAgentHub",
+        "run",
+        "autoagenthub-mcp"
+      ],
+      "env": {
+        "GEMINI_API_KEY": "your_gemini_api_key",
+        "GITHUB_TOKEN": "ghp_your_github_token",
+        "GITHUB_DEFAULT_REPO": "owner/repo",
+        "TELEGRAM_BOT_TOKEN": "your_telegram_bot_token",
+        "TELEGRAM_DEFAULT_CHAT_ID": "your_chat_id",
+        "WHATSAPP_ACCESS_TOKEN": "",
+        "WHATSAPP_PHONE_NUMBER_ID": ""
+      }
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_github_token"
+      }
+    }
+  }
+}
