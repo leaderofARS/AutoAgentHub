@@ -7,13 +7,14 @@ import hashlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -25,6 +26,11 @@ from telegram.ext import (
     filters,
 )
 
+from autoagenthub.agents.briefing import generate_daily_briefing
+from autoagenthub.agents.finance_agent import scan_watchlist_markets
+from autoagenthub.agents.geopolitics_agent import scan_geopolitical_events
+from autoagenthub.agents.profile_memory import list_projects
+from autoagenthub.agents.tech_radar_agent import scan_technology_radar
 from autoagenthub.agent_runner import run_agent
 from autoagenthub.config import get_settings
 from autoagenthub.github_tools import (
@@ -36,6 +42,8 @@ from autoagenthub.github_tools import (
 from autoagenthub.jobs_tools import approve_job_application, find_daily_jobs
 from autoagenthub.news_tools import get_latest_news
 from autoagenthub.orchestrator import ConcurrentOrchestrator, run_parallel_digest
+from autoagenthub.os_routes import get_platform_db, router as os_router
+from autoagenthub.security import decide_approval
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("autoagenthub")
@@ -133,6 +141,9 @@ async def route_user_message(text: str) -> str:
             "- /jobs [query] : Find matching jobs & draft pitches\n"
             "- /apply <job_id> : Approve a queued job application\n"
             "- /digest [topic] : Run GitHub + News + Jobs concurrently\n"
+            "- /briefing : Personalized Daily Briefing (Career, Tech, Markets, World)\n"
+            "- /tech | /markets | /world | /projects : OS Intelligence Scans\n"
+            "- /approve <id> | /reject <id> : Decide pending approval gates\n"
             "- /remind <minutes> <msg> : Set a Telegram reminder\n"
             "- /tasks | /dlq | /status : Inspect background tasks & metrics\n"
             "- /agy <prompt> | /agent <backend> <prompt>\n"
@@ -156,6 +167,50 @@ async def route_user_message(text: str) -> str:
             f"- [{t['id']}] {t['task_type']} | {t['status']} (attempts: {t['attempts']})"
             for t in tasks
         )
+
+    if lower == "/briefing":
+        res = await generate_daily_briefing(get_platform_db())
+        return res["text"]
+
+    if lower.startswith("/tech"):
+        q = cleaned[5:].strip() or "LLM inference OR Rust OR C++"
+        items = await scan_technology_radar(get_platform_db(), query=q)
+        if not items:
+            return "No new technology items discovered."
+        return "Tech Radar:\n" + "\n".join(
+            f"- [{i['radar_ring']}] {i['name']} ({i['classification']})\n  {i['source_url']}" for i in items[:6]
+        )
+
+    if lower in {"/markets", "/watchlist"}:
+        obs = await scan_watchlist_markets(get_platform_db())
+        return "Watchlist Markets (delayed public feed):\n" + "\n".join(
+            f"- {o['symbol']}: {o.get('price', 'err')} {o.get('currency', '')} ({o.get('change_pct', 0):+}%) — {o.get('analysis_note', o.get('error', ''))}"
+            for o in obs
+        )
+
+    if lower == "/world":
+        evs = await scan_geopolitical_events(get_platform_db())
+        if not evs:
+            return "No new medium/high-priority geopolitical events."
+        return "Geopolitical Feed:\n" + "\n".join(
+            f"- [{e['priority']} | {e['verification_status']}] {e['headline']}" for e in evs[:6]
+        )
+
+    if lower == "/projects":
+        projs = await list_projects(get_platform_db())
+        if not projs:
+            return "No tracked projects yet. Add one in /dashboard."
+        return "Tracked Projects:\n" + "\n".join(f"- {p['name']} ({p['status']}) {p['repo_url']}" for p in projs)
+
+    if lower.startswith("/approve "):
+        aid = cleaned[9:].strip()
+        res = await decide_approval(get_platform_db(), aid, approve=True, actor="telegram")
+        return f"Approved {aid}." if res else f"Approval {aid} not found."
+
+    if lower.startswith("/reject "):
+        aid = cleaned[8:].strip()
+        res = await decide_approval(get_platform_db(), aid, approve=False, actor="telegram")
+        return f"Rejected {aid}." if res else f"Approval {aid} not found."
 
     if lower == "/dlq":
         items = await get_orchestrator().store.list_dlq(limit=10)
@@ -427,6 +482,14 @@ async def lifespan(app: FastAPI):
                     "apply",
                     "agent",
                     "digest",
+                    "briefing",
+                    "tech",
+                    "markets",
+                    "watchlist",
+                    "world",
+                    "projects",
+                    "approve",
+                    "reject",
                     "remind",
                     "tasks",
                     "dlq",
@@ -461,7 +524,14 @@ async def lifespan(app: FastAPI):
         await orch.stop()
 
 
-app = FastAPI(title="AutoAgentHub", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="AutoAgentHub", version="0.4.0", lifespan=lifespan)
+app.include_router(os_router)
+
+
+@app.get("/dashboard")
+async def dashboard_ui() -> FileResponse:
+    """Serve the responsive Personal Intelligence & Execution OS Web Command Centre."""
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 class TaskSubmitRequest(BaseModel):
@@ -474,7 +544,7 @@ class TaskSubmitRequest(BaseModel):
 @app.get("/")
 @app.head("/")
 async def root() -> dict[str, str]:
-    return {"service": "AutoAgentHub", "status": "ok", "docs": "/docs"}
+    return {"service": "AutoAgentHub", "status": "ok", "dashboard": "/dashboard", "docs": "/docs"}
 
 
 @app.get("/health")

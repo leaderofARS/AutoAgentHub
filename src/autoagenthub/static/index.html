@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoAgentHub — Personal Intelligence & Execution OS</title>
+  <style>
+    :root {
+      --bg: #0b1020; --card: #131a2e; --border: #253052; --text: #e8eefc;
+      --muted: #93a4cc; --accent: #4f8cff; --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); background: #0e1528; }
+    header h1 { margin: 0; font-size: 1.15rem; }
+    nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 20px; border-bottom: 1px solid var(--border); background: #0f162a; }
+    nav button { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    main { max-width: 1200px; margin: 0 auto; padding: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .metric { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    .btn.ok { background: var(--ok); } .btn.bad { background: var(--bad); } .btn.sec { background: #253052; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    input, select { background: #0b1020; color: var(--text); border: 1px solid var(--border); padding: 7px 10px; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: #253052; }
+    .pill.ok { background: rgba(34,197,94,0.2); color: #4ade80; }
+    .pill.warn { background: rgba(245,158,11,0.2); color: #fbbf24; }
+    .pill.bad { background: rgba(239,68,68,0.2); color: #f87171; }
+    pre { white-space: pre-wrap; background: #0b1020; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 0.85rem; }
+    a { color: #7cb3ff; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AutoAgentHub — Personal Intelligence & Execution OS</h1>
+    <div class="row" style="margin:0">
+      <button class="btn" onclick="runBriefing()">Generate Daily Briefing</button>
+      <button class="btn sec" onclick="refreshAll()">Refresh</button>
+    </div>
+  </header>
+  <nav id="tabs">
+    <button class="active" data-tab="overview">Overview</button>
+    <button data-tab="career">Career</button>
+    <button data-tab="tech">Tech Radar</button>
+    <button data-tab="finance">Finance</button>
+    <button data-tab="geo">Geopolitics</button>
+    <button data-tab="projects">Projects & Memory</button>
+    <button data-tab="approvals">Approvals & Audit</button>
+  </nav>
+  <main>
+    <section id="tab-overview">
+      <div class="grid" id="overview-cards"></div>
+      <div class="card">
+        <h3>Daily Briefing Output</h3>
+        <pre id="briefing-box">Click "Generate Daily Briefing" to run Career, Tech, Finance, and Geopolitics scans concurrently.</pre>
+      </div>
+    </section>
+
+    <section id="tab-career" class="hidden">
+      <div class="row">
+        <input id="job-query" value="python software engineer" placeholder="Job search query" />
+        <button class="btn" onclick="scanJobs()">Scan & Score Jobs</button>
+      </div>
+      <div class="card" style="overflow-x:auto">
+        <table><thead><tr><th>Role</th><th>Company</th><th>Score</th><th>Eligibility</th><th>Recommendation</th><th>Action</th></tr></thead><tbody id="jobs-body"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-tech" class="hidden">
+      <div class="row">
+        <input id="tech-query" value="LLM inference OR Rust OR C++" />
+        <button class="btn" onclick="scanTech()">Scan arXiv & Releases</button>
+      </div>
+      <div class="card" style="overflow-x:auto">
+        <table><thead><tr><th>Technology</th><th>Category</th><th>Class</th><th>Ring</th><th>Move Ring</th></tr></thead><tbody id="tech-body"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-finance" class="hidden">
+      <div class="row">
+        <button class="btn" onclick="scanFinance()">Refresh Market Quotes</button>
+        <input id="wl-sym" placeholder="Symbol (e.g. AAPL)" />
+        <input id="wl-name" placeholder="Name" />
+        <button class="btn sec" onclick="addWatchlist()">Add Watchlist</button>
+      </div>
+      <div class="card" style="overflow-x:auto">
+        <table><thead><tr><th>Symbol</th><th>Price</th><th>Change</th><th>Feed</th><th>Timestamp</th><th>Alert</th></tr></thead><tbody id="fin-body"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-geo" class="hidden">
+      <div class="row"><button class="btn" onclick="scanGeo()">Scan Global & Geopolitical Feeds</button></div>
+      <div class="card" style="overflow-x:auto">
+        <table><thead><tr><th>Priority</th><th>Status</th><th>Headline</th><th>Impact</th></tr></thead><tbody id="geo-body"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-projects" class="hidden">
+      <div class="row">
+        <input id="proj-name" placeholder="Project name" />
+        <input id="proj-repo" placeholder="GitHub URL" />
+        <input id="proj-tech" placeholder="Tech (comma-separated)" />
+        <button class="btn" onclick="addProject()">Add Project</button>
+      </div>
+      <div class="card" style="margin-bottom:14px"><h3>Projects</h3><div id="projects-list"></div></div>
+      <div class="row">
+        <input id="mem-content" placeholder="Add memory note..." style="flex:1" />
+        <button class="btn sec" onclick="addMemory()">Save Memory</button>
+      </div>
+      <div class="card"><h3>Memory Store</h3><div id="memories-list"></div></div>
+    </section>
+
+    <section id="tab-approvals" class="hidden">
+      <div class="card" style="margin-bottom:14px"><h3>Pending & Past Approvals</h3><div id="approvals-list"></div></div>
+      <div class="card"><h3>Audit Log</h3><div id="audit-list"></div></div>
+    </section>
+  </main>
+
+  <script>
+    const api = async (path, opts={}) => {
+      const r = await fetch(path, { headers: {'Content-Type':'application/json'}, ...opts });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    };
+    document.querySelectorAll('#tabs button').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('#tabs button').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('main section').forEach(s => s.classList.add('hidden'));
+        b.classList.add('active');
+        document.getElementById('tab-' + b.dataset.tab).classList.remove('hidden');
+      };
+    });
+    async function refreshAll() {
+      const [ov, met, jobs, tech, fin, geo, projs, mems, apps, audit] = await Promise.all([
+        api('/api/os/overview'), api('/metrics'), api('/api/os/jobs'), api('/api/os/tech'),
+        api('/api/os/finance'), api('/api/os/geopolitics'), api('/api/os/projects'),
+        api('/api/os/memories'), api('/api/os/approvals'), api('/api/os/audit')
+      ]);
+      document.getElementById('overview-cards').innerHTML = `
+        <div class="card"><div class="muted">Active / Configured Workers</div><div class="metric">${met.workers_active} / ${met.workers_configured}</div></div>
+        <div class="card"><div class="muted">Jobs Tracked</div><div class="metric">${ov.counts.jobs}</div></div>
+        <div class="card"><div class="muted">Tech Radar Items</div><div class="metric">${ov.counts.tech_items}</div></div>
+        <div class="card"><div class="muted">Pending Approvals</div><div class="metric">${ov.counts.pending_approvals}</div></div>
+        <div class="card"><div class="muted">Model Calls</div><div class="metric">${ov.model_usage.calls}</div></div>`;
+      document.getElementById('jobs-body').innerHTML = jobs.map(j => `<tr>
+        <td><a href="${j.url}" target="_blank">${j.title}</a></td><td>${j.company}</td>
+        <td><b>${j.overall_score ?? '-'}</b></td><td><span class="pill ${j.hard_eligibility==='PASS'?'ok':'warn'}">${j.hard_eligibility ?? 'N/A'}</span></td>
+        <td>${j.recommendation ?? ''}</td><td><button class="btn sec" onclick="queueApply('${j.id}')">Queue Apply</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No jobs yet. Click Scan & Score Jobs.</td></tr>';
+      document.getElementById('tech-body').innerHTML = tech.map(t => `<tr>
+        <td><a href="${t.source_url}" target="_blank">${t.name}</a></td><td>${t.category}</td><td>${t.classification}</td>
+        <td><span class="pill">${t.radar_ring}</span></td>
+        <td><select onchange="moveRing('${t.id}', this.value)">${['ADOPT','TRIAL','ASSESS','HOLD'].map(r=>`<option ${t.radar_ring===r?'selected':''}>${r}</option>`).join('')}</select></td></tr>`).join('') || '<tr><td colspan="5" class="muted">No tech items yet.</td></tr>';
+      document.getElementById('fin-body').innerHTML = fin.observations.map(o => `<tr>
+        <td><b>${o.symbol}</b></td><td>${o.price} ${o.currency}</td><td>${o.change_pct}%</td><td>${o.market_status}</td><td>${o.data_timestamp}</td><td>${o.analysis_note}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Click Refresh Market Quotes.</td></tr>';
+      document.getElementById('geo-body').innerHTML = geo.map(g => `<tr>
+        <td><span class="pill ${g.priority==='HIGH'?'bad':'warn'}">${g.priority}</span></td><td>${g.verification_status}</td><td>${g.headline}</td><td class="muted">${g.impact_analysis}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Click Scan Global & Geopolitical Feeds.</td></tr>';
+      document.getElementById('projects-list').innerHTML = projs.map(p => `<div style="margin-bottom:6px"><b>${p.name}</b> — <span class="muted">${p.repo_url}</span></div>`).join('') || '<div class="muted">No projects yet.</div>';
+      document.getElementById('memories-list').innerHTML = mems.map(m => `<div class="row"><span>[${m.memory_type}] ${m.content}</span><button class="btn bad" onclick="delMem('${m.id}')">Delete</button></div>`).join('') || '<div class="muted">No memories stored.</div>';
+      document.getElementById('approvals-list').innerHTML = apps.map(a => `<div class="row">
+        <span><b>${a.action_type}</b> → ${a.target} (<span class="pill">${a.status}</span>)</span>
+        ${a.status==='pending'?`<button class="btn ok" onclick="decide('${a.id}',true)">Approve</button><button class="btn bad" onclick="decide('${a.id}',false)">Reject</button>`:''}
+      </div>`).join('') || '<div class="muted">No approvals.</div>';
+      document.getElementById('audit-list').innerHTML = audit.map(a => `<div class="muted">${a.created_at} | ${a.actor} | ${a.action} | ${a.target} | ${a.outcome}</div>`).join('') || '<div class="muted">No audit logs yet.</div>';
+    }
+    async function runBriefing() { document.getElementById('briefing-box').textContent = 'Generating briefing...'; const res = await api('/api/os/briefing',{method:'POST'}); document.getElementById('briefing-box').textContent = res.text; refreshAll(); }
+    async function scanJobs() { await api('/api/os/jobs/scan?query='+encodeURIComponent(document.getElementById('job-query').value),{method:'POST'}); refreshAll(); }
+    async function queueApply(id) { await api('/api/os/jobs/'+id+'/queue-apply',{method:'POST'}); alert('Queued for approval!'); refreshAll(); }
+    async function scanTech() { await api('/api/os/tech/scan?query='+encodeURIComponent(document.getElementById('tech-query').value),{method:'POST'}); refreshAll(); }
+    async function moveRing(id, ring) { await api('/api/os/tech/'+id+'?ring='+ring,{method:'PATCH'}); refreshAll(); }
+    async function scanFinance() { await api('/api/os/finance/scan',{method:'POST'}); refreshAll(); }
+    async function addWatchlist() { await api('/api/os/finance/watchlist',{method:'POST',body:JSON.stringify({symbol:document.getElementById('wl-sym').value,name:document.getElementById('wl-name').value})}); refreshAll(); }
+    async function scanGeo() { await api('/api/os/geopolitics/scan',{method:'POST'}); refreshAll(); }
+    async function addProject() { await api('/api/os/projects',{method:'POST',body:JSON.stringify({name:document.getElementById('proj-name').value,repo_url:document.getElementById('proj-repo').value,technologies:document.getElementById('proj-tech').value.split(',').map(s=>s.trim()).filter(Boolean)})}); refreshAll(); }
+    async function addMemory() { await api('/api/os/memories',{method:'POST',body:JSON.stringify({content:document.getElementById('mem-content').value})}); document.getElementById('mem-content').value=''; refreshAll(); }
+    async function delMem(id) { await api('/api/os/memories/'+id,{method:'DELETE'}); refreshAll(); }
+    async function decide(id, ok) { await api('/api/os/approvals/'+id+'/'+(ok?'approve':'reject'),{method:'POST'}); refreshAll(); }
+    refreshAll();
+  </script>
+</body>
+</html>

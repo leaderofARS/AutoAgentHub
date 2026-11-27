@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # Server & Storage
     port: int = 8000
     data_dir: Path = Path("data")
+    dashboard_api_token: str = ""
 
     # Concurrency, Queue & Resilience
     worker_concurrency: int = 4
