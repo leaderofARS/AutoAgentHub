@@ -1,7 +1,8 @@
-"""24/7 Concurrent FastAPI + Worker Pool + Telegram Bot + WhatsApp Webhook + Scheduler server."""
+"""24/7 Concurrent FastAPI + Worker Pool + Telegram Bot (Polling/Webhook) + WhatsApp + GitHub Webhook."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -26,9 +27,12 @@ from telegram.ext import (
 
 from autoagenthub.agent_runner import run_agent
 from autoagenthub.config import get_settings
-from autoagenthub.github_tools import apply_repo_code_change, audit_repository_summary
+from autoagenthub.github_tools import (
+    apply_repo_code_change,
+    audit_repository_summary,
+    create_github_issue,
+)
 from autoagenthub.jobs_tools import approve_job_application, find_daily_jobs
-from autoagenthub.messaging_tools import send_telegram_message, send_whatsapp_message
 from autoagenthub.news_tools import get_latest_news
 from autoagenthub.orchestrator import ConcurrentOrchestrator, run_parallel_digest
 
@@ -36,6 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("autoagenthub")
 
 orchestrator: ConcurrentOrchestrator | None = None
+telegram_app: Application | None = None
 
 
 def get_orchestrator() -> ConcurrentOrchestrator:
@@ -43,6 +48,31 @@ def get_orchestrator() -> ConcurrentOrchestrator:
     if orchestrator is None:
         orchestrator = ConcurrentOrchestrator()
     return orchestrator
+
+
+def _main_menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Repo Audit", callback_data="menu:repo"),
+                InlineKeyboardButton("Latest News", callback_data="menu:news"),
+            ],
+            [
+                InlineKeyboardButton("Find Jobs", callback_data="menu:jobs"),
+                InlineKeyboardButton("Parallel Digest", callback_data="menu:digest"),
+            ],
+            [
+                InlineKeyboardButton("System Status", callback_data="menu:status"),
+                InlineKeyboardButton("Recent Tasks", callback_data="menu:tasks"),
+            ],
+        ]
+    )
+
+
+def _chunk_text(text: str, limit: int = 3800) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    return [text[i : i + limit] for i in range(0, len(text), limit)]
 
 
 def parse_message_to_task(text: str) -> tuple[str, dict[str, Any]]:
@@ -87,27 +117,64 @@ def parse_message_to_task(text: str) -> tuple[str, dict[str, Any]]:
 
 
 async def route_user_message(text: str) -> str:
-    """Direct synchronous/async execution helper for interactive commands & unit tests."""
+    """Direct execution helper for interactive commands and unit tests."""
     cleaned = text.strip()
     lower = cleaned.lower()
 
-    if lower in {"/start", "/help", "help"}:
+    if lower in {"/start", "/help", "/menu", "help"}:
         return (
             "AutoAgentHub Commands:\n"
+            "- /menu : Open quick-action buttons\n"
             "- /repo [owner/repo] : Check GitHub bugs, PRs, and doc gaps\n"
-            "- /code [owner/repo] <task> : Run Antigravity on your GitHub repo & open a PR\n"
-            "- /agy <prompt> : Run Antigravity CLI directly on any task\n"
+            "- /code [owner/repo] <task> : Edit code in GitHub & open a PR\n"
+            "- /issue [owner/repo] <title> | <desc> : Open a GitHub issue\n"
             "- /news <topic> : Search the web for latest news\n"
             "- /jobs [query] : Find matching jobs & draft pitches\n"
             "- /apply <job_id> : Approve a queued job application\n"
-            "- /digest [topic] : Run GitHub + News + Jobs concurrently in parallel\n"
-            "- /status : View live worker pool, queue, and circuit breaker metrics\n"
-            "- /agent <gemini|agy|custom> <prompt> : Run a specific agent backend\n"
+            "- /digest [topic] : Run GitHub + News + Jobs concurrently\n"
+            "- /remind <minutes> <msg> : Set a Telegram reminder\n"
+            "- /tasks | /dlq | /status : Inspect background tasks & metrics\n"
+            "- /agy <prompt> | /agent <backend> <prompt>\n"
             "Or just type any problem in plain text!"
         )
 
     if lower == "/status":
-        return str(await get_orchestrator().metrics())
+        m = await get_orchestrator().metrics()
+        q = m["queue"]
+        return (
+            f"Workers: {m['workers_active']}/{m['workers_configured']} active\n"
+            f"Processed: {m['tasks_processed']} | Failed: {m['tasks_failed']} | Avg: {m['avg_latency_ms']} ms\n"
+            f"Queue -> queued:{q['queued']} running:{q['running']} completed:{q['completed']} dlq:{q['dlq']}"
+        )
+
+    if lower == "/tasks":
+        tasks = await get_orchestrator().store.list_tasks(limit=8)
+        if not tasks:
+            return "No background tasks recorded yet."
+        return "Recent Tasks:\n" + "\n".join(
+            f"- [{t['id']}] {t['task_type']} | {t['status']} (attempts: {t['attempts']})"
+            for t in tasks
+        )
+
+    if lower == "/dlq":
+        items = await get_orchestrator().store.list_dlq(limit=10)
+        if not items:
+            return "Dead-Letter Queue is empty."
+        return "Failed Tasks (DLQ):\n" + "\n".join(
+            f"- [{d['id']}] {d['task_type']} -> {d['error_text'][:120]}" for d in items
+        )
+
+    if lower.startswith("/issue"):
+        rest = cleaned[6:].strip()
+        if not rest:
+            return "Usage: /issue [owner/repo] <title> | <description>"
+        repo = None
+        parts = rest.split(maxsplit=1)
+        if len(parts) == 2 and "/" in parts[0] and " " not in parts[0]:
+            repo, rest = parts[0], parts[1]
+        title, _, body = rest.partition("|")
+        created = await create_github_issue(title=title.strip(), body=body.strip(), repo=repo)
+        return f"Issue #{created['number']} created: {created['url']}"
 
     if lower.startswith("/apply"):
         job_id = cleaned[6:].strip()
@@ -129,7 +196,7 @@ async def route_user_message(text: str) -> str:
         return await apply_repo_code_change(
             instruction=payload.get("instruction", cleaned),
             repo=payload.get("repo"),
-            backend=payload.get("backend", "agy"),
+            backend=payload.get("backend", "auto"),
         )
     if task_type == "news":
         return await get_latest_news(payload["topic"])
@@ -199,6 +266,20 @@ def _is_allowed_telegram(chat_id: int) -> bool:
     return not allowed or chat_id in allowed
 
 
+async def _send_tg_reply(message_obj, reply: str, with_job_buttons: bool = False) -> None:
+    if with_job_buttons:
+        jobs = [line.split("]")[0].lstrip("[") for line in reply.splitlines() if line.startswith("[")]
+        if jobs:
+            buttons = [
+                [InlineKeyboardButton(f"Approve {jid}", callback_data=f"apply:{jid}")]
+                for jid in jobs[:5]
+            ]
+            await message_obj.reply_text(reply[:3800], reply_markup=InlineKeyboardMarkup(buttons))
+            return
+    for chunk in _chunk_text(reply):
+        await message_obj.reply_text(chunk)
+
+
 async def _tg_handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_message or not update.effective_chat:
         return
@@ -206,23 +287,34 @@ async def _tg_handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.effective_message.reply_text("Unauthorized chat ID.")
         return
 
-    text = update.effective_message.text or ""
-    await update.effective_message.reply_text("Queued / processing...")
-    reply = await route_user_message(text)
+    text = (update.effective_message.text or "").strip()
+    lower = text.lower()
 
-    if text.strip().lower().startswith("/jobs"):
-        jobs = [line.split("]")[0].lstrip("[") for line in reply.splitlines() if line.startswith("[")]
-        if jobs:
-            buttons = [
-                [InlineKeyboardButton(f"Approve {jid}", callback_data=f"apply:{jid}")]
-                for jid in jobs[:5]
-            ]
-            await update.effective_message.reply_text(
-                reply[:4000], reply_markup=InlineKeyboardMarkup(buttons)
-            )
+    if lower in {"/start", "/menu"}:
+        reply = await route_user_message(text)
+        await update.effective_message.reply_text(reply, reply_markup=_main_menu_markup())
+        return
+
+    if lower.startswith("/remind"):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3 or not parts[1].isdigit():
+            await update.effective_message.reply_text("Usage: /remind <minutes> <message>")
             return
+        minutes = int(parts[1])
+        reminder_msg = parts[2]
+        chat_id = update.effective_chat.id
 
-    await update.effective_message.reply_text(reply[:4000])
+        async def _fire() -> None:
+            await asyncio.sleep(minutes * 60)
+            await context.bot.send_message(chat_id=chat_id, text=f"Reminder: {reminder_msg}")
+
+        asyncio.create_task(_fire())
+        await update.effective_message.reply_text(f"Reminder set for {minutes} minute(s).")
+        return
+
+    await update.effective_message.reply_text("Working on it...")
+    reply = await route_user_message(text)
+    await _send_tg_reply(update.effective_message, reply, with_job_buttons=lower.startswith("/jobs"))
 
 
 async def _tg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -230,6 +322,24 @@ async def _tg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not query or not query.data:
         return
     await query.answer()
+
+    if query.data.startswith("menu:"):
+        action = query.data.split(":", 1)[1]
+        cmd_map = {
+            "repo": "/repo",
+            "news": "/news AI and technology",
+            "jobs": "/jobs",
+            "digest": "/digest",
+            "status": "/status",
+            "tasks": "/tasks",
+        }
+        cmd = cmd_map.get(action, "/help")
+        await query.edit_message_text(f"Running {cmd}...")
+        reply = await route_user_message(cmd)
+        if query.message:
+            await _send_tg_reply(query.message, reply, with_job_buttons=(action == "jobs"))
+        return
+
     if query.data.startswith("apply:"):
         job_id = query.data.split(":", 1)[1]
         approved = approve_job_application(job_id)
@@ -252,6 +362,7 @@ def _parse_hhmm(value: str, fallback: tuple[int, int]) -> tuple[int, int]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global telegram_app
     settings = get_settings()
     orch = get_orchestrator()
     await orch.start()
@@ -263,43 +374,71 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(scheduled_daily_repo_check, CronTrigger(hour=rh, minute=rm), id="daily_repo")
     scheduler.start()
 
-    tg_app: Application | None = None
     if settings.telegram_bot_token:
-        tg_app = Application.builder().token(settings.telegram_bot_token).build()
-        tg_app.add_handler(
+        telegram_app = Application.builder().token(settings.telegram_bot_token).build()
+        telegram_app.add_handler(
             CommandHandler(
-                ["start", "help", "repo", "code", "agy", "news", "jobs", "apply", "agent", "digest", "status"],
+                [
+                    "start",
+                    "help",
+                    "menu",
+                    "repo",
+                    "code",
+                    "issue",
+                    "agy",
+                    "news",
+                    "jobs",
+                    "apply",
+                    "agent",
+                    "digest",
+                    "remind",
+                    "tasks",
+                    "dlq",
+                    "status",
+                ],
                 _tg_handle_text,
             )
         )
-        tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _tg_handle_text))
-        tg_app.add_handler(CallbackQueryHandler(_tg_callback))
-        await tg_app.initialize()
-        await tg_app.start()
-        if tg_app.updater:
-            await tg_app.updater.start_polling(drop_pending_updates=True)
-        logger.info("Telegram bot polling started.")
+        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _tg_handle_text))
+        telegram_app.add_handler(CallbackQueryHandler(_tg_callback))
+        await telegram_app.initialize()
+        await telegram_app.start()
+
+        if settings.telegram_webhook_url:
+            webhook_endpoint = f"{settings.telegram_webhook_url.rstrip('/')}/webhook/telegram"
+            await telegram_app.bot.set_webhook(url=webhook_endpoint, drop_pending_updates=True)
+            logger.info("Telegram webhook registered at %s", webhook_endpoint)
+        elif telegram_app.updater:
+            await telegram_app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Telegram bot polling started.")
 
     try:
         yield
     finally:
-        if tg_app:
-            if tg_app.updater:
-                await tg_app.updater.stop()
-            await tg_app.stop()
-            await tg_app.shutdown()
+        if telegram_app:
+            if telegram_app.updater and telegram_app.updater.running:
+                await telegram_app.updater.stop()
+            await telegram_app.stop()
+            await telegram_app.shutdown()
+            telegram_app = None
         scheduler.shutdown(wait=False)
         await orch.stop()
 
 
-app = FastAPI(title="AutoAgentHub", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AutoAgentHub", version="0.3.0", lifespan=lifespan)
 
 
 class TaskSubmitRequest(BaseModel):
-    task_type: str = Field(..., description="github_audit | news | jobs | agent | digest")
+    task_type: str = Field(..., description="github_audit | code_change | news | jobs | agent | digest")
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = Field(default=5, ge=1, le=10)
     dedupe_key: str | None = None
+
+
+@app.get("/")
+@app.head("/")
+async def root() -> dict[str, str]:
+    return {"service": "AutoAgentHub", "status": "ok", "docs": "/docs"}
 
 
 @app.get("/health")
@@ -310,6 +449,11 @@ async def health() -> dict[str, str]:
 @app.get("/metrics")
 async def metrics() -> dict[str, Any]:
     return await get_orchestrator().metrics()
+
+
+@app.get("/api/tasks")
+async def list_tasks(limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, Any]]:
+    return await get_orchestrator().store.list_tasks(limit=limit)
 
 
 @app.post("/api/tasks", status_code=202)
@@ -338,6 +482,43 @@ async def get_task_status(task_id: str) -> dict[str, Any]:
 @app.get("/api/dlq")
 async def list_dead_letter_queue() -> list[dict[str, Any]]:
     return await get_orchestrator().store.list_dlq()
+
+
+@app.post("/api/dlq/{dlq_id}/retry", status_code=202)
+async def retry_dlq_task(dlq_id: str) -> dict[str, Any]:
+    retried = await get_orchestrator().store.retry_dlq_item(dlq_id)
+    if not retried:
+        raise HTTPException(status_code=404, detail="DLQ entry not found")
+    return {"status": "requeued", "task_id": retried["id"]}
+
+
+@app.post("/api/cron/trigger", status_code=202)
+async def trigger_cron(job: str = Query(default="daily_jobs")) -> dict[str, str]:
+    """Manually or externally trigger scheduled jobs (useful for cron-job.org)."""
+    if job == "daily_jobs":
+        await scheduled_daily_jobs()
+    elif job == "daily_repo":
+        await scheduled_daily_repo_check()
+    elif job == "digest":
+        settings = get_settings()
+        payload: dict[str, Any] = {}
+        if settings.telegram_bot_token and settings.telegram_default_chat_id:
+            payload = {"reply_channel": "telegram", "reply_to": settings.telegram_default_chat_id}
+        await get_orchestrator().submit("digest", payload, priority=3)
+    else:
+        raise HTTPException(status_code=400, detail="job must be daily_jobs, daily_repo, or digest")
+    return {"status": "triggered", "job": job}
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request) -> dict[str, str]:
+    """Receive Telegram updates via webhook (wakes Render from sleep on demand)."""
+    if telegram_app is None:
+        raise HTTPException(status_code=503, detail="Telegram bot is not configured")
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"status": "ok"}
 
 
 @app.get("/webhook/whatsapp")

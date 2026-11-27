@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_allowed_chat_ids: str = ""
     telegram_default_chat_id: str = ""
+    telegram_webhook_url: str = ""
 
     # WhatsApp Cloud API
     whatsapp_access_token: str = ""

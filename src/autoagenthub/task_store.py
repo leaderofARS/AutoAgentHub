@@ -247,6 +247,42 @@ class DurableTaskStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    async def list_tasks(self, limit: int = 20) -> list[dict[str, Any]]:
+        """List recent tasks ordered by creation time descending."""
+        async with self._lock:
+            return await asyncio.to_thread(self._list_tasks_sync, limit)
+
+    def _list_tasks_sync(self, limit: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, task_type, priority, status, attempts, max_retries, created_at, updated_at "
+                "FROM tasks ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    async def retry_dlq_item(self, dlq_id: str) -> dict[str, Any] | None:
+        """Re-enqueue a dead-lettered task and remove it from the DLQ."""
+        async with self._lock:
+            return await asyncio.to_thread(self._retry_dlq_sync, dlq_id)
+
+    def _retry_dlq_sync(self, dlq_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM dead_letter_queue WHERE id = ?", (dlq_id,)
+            ).fetchone()
+            if not row:
+                return None
+            new_task = self._enqueue_sync(
+                task_type=row["task_type"],
+                payload=json.loads(row["payload_json"]),
+                priority=3,
+                max_retries=3,
+                dedupe_key=None,
+            )
+            conn.execute("DELETE FROM dead_letter_queue WHERE id = ?", (dlq_id,))
+            return new_task
+
     async def get_stats(self) -> dict[str, int]:
         async with self._lock:
             return await asyncio.to_thread(self._get_stats_sync)

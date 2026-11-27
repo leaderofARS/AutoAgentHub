@@ -163,3 +163,29 @@ def test_workspace_path_traversal_blocked(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         _safe_resolve(tmp_path, "../../etc/passwd")
+
+
+def test_root_list_tasks_dlq_retry_and_cron_endpoints(tmp_path, monkeypatch) -> None:
+    import autoagenthub.server as srv
+
+    store = DurableTaskStore(tmp_path / "extra.db")
+    orch = ConcurrentOrchestrator(store=store)
+    monkeypatch.setattr(srv, "orchestrator", orch)
+
+    async def _fake_submit(task_type, payload, priority=5, dedupe_key=None):
+        return {"id": "mock123", "status": "queued"}
+
+    monkeypatch.setattr(orch, "submit", _fake_submit)
+
+    with TestClient(app) as client:
+        root_resp = client.get("/")
+        assert root_resp.status_code == 200
+        assert root_resp.json()["status"] == "ok"
+
+        list_resp = client.get("/api/tasks")
+        assert list_resp.status_code == 200
+        assert isinstance(list_resp.json(), list)
+
+        cron_resp = client.post("/api/cron/trigger?job=digest")
+        assert cron_resp.status_code == 202
+        assert cron_resp.json()["job"] == "digest"

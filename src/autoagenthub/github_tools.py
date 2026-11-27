@@ -294,3 +294,25 @@ async def apply_repo_code_change(
         return f"PR created: {pr_url}\n\nSummary:\n{res.output}"
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+async def create_github_issue(
+    title: str,
+    body: str = "",
+    repo: str | None = None,
+) -> dict[str, Any]:
+    """Create a GitHub issue in the target repository."""
+    settings = get_settings()
+    if not settings.github_token:
+        raise ValueError("GITHUB_TOKEN is required to create a GitHub issue.")
+    target = _resolve_repo(repo)
+    headers = _headers(settings.github_token)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{GITHUB_API}/repos/{target}/issues",
+            headers=headers,
+            json={"title": title, "body": body or "Created via AutoAgentHub."},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {"number": data["number"], "url": data["html_url"], "title": data["title"]}
